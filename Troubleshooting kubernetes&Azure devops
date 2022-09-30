@@ -1,0 +1,429 @@
+
+
+
+
+Clear the space on VM :
+
+docker-vm1 :
+/mnt/disks/apps
+
+docker system prune -f
+docker image prune -f -a
+
+/mnt/disks/apps/myagent/_work/6 and 7 folder delete based on the dates (older files prefered)
+=======================================================
+
+##[error]Error: UPGRADE FAILED:  another operation (install/upgrade/rollback) is in progress
+
+root@docker-vm-qa1:/home/priyanka# helm list -n dev | grep intake-service
+NAME                            NAMESPACE       REVISION        UPDATED               ...+0000 UTC failed  patientfinancials-service-0.1.0 1.16.0
+root@docker-vm-qa1:/home/priyanka# helm history intake-service --namespace dev
+REVISION        UPDATED                         STATUS ...       1.16.0          Initial install underway
+root@docker-vm-qa1:/home/priyanka# helm uninstall prescriber-service --namespace dev
+release "foundation-service" uninstalled
+
+================================================================
+For Helm Download fails to pull image from Artifacts registry
+
+root@docker-vm-qa1:~# cat key.json | helm registry login -u _json_key --password-stdin https://us-east4-docker.pkg.dev
+Login Succeeded
+root@docker-vm-qa1:~#
+Here,
+Key.json is SA key file and _json_key is key type.
+
+=======================================
+Error: UPGRADE FAILED: cannot patch "order-service" with kind Deployment: Deployment.apps "order-service" is invalid: spec.selector: Invalid value: v1.LabelSelector{MatchLabels:map[string]string{"service":"order-service"}, MatchExpressions:[]v1.LabelSelectorRequirement(nil)}: field is immutable
+##[error]Error: UPGRADE FAILED: cannot patch "order-service" with kind Deployment: Deployment.apps "order-service" is invalid: spec.selector: Invalid value: v1.LabelSelector{MatchLabels:map[string]string{"service":"order-service"}, MatchExpressions:[]v1.LabelSelectorRequirement(nil)}: field is immutable
+
+## Delete Deployment and re-run the respective stage of the pipeline 
+======================================
+Error: failed to authorize: failed to fetch oauth token: unexpected status: 401 Unauthorized
+##[error]Error: failed to authorize: failed to fetch oauth token: unexpected status: 401 Unauthorized
+
+Delete all the Duplicate pipelines and try to run the new pipeline 
+or
+Use old helm push script:
+
+    - task: Bash@3
+      displayName: Helm push
+      inputs:
+        targetType: 'inline'
+        script: |
+          gcloud auth print-access-token | helm registry login -u oauth2accesstoken --password-stdin https://us-east4-docker.pkg.dev
+          helm push $(Build.ArtifactStagingDirectory)/*.tgz oci://us-east4-docker.pkg.dev/inov-dev-smc-01/helm
+
+=====================================
+If POD's are in running state, but url is not accessable and in LB helath status is 0/0.
+Try to check the DNS 
+check the backend configured in LB
+try to remove the svc and neg and recreate new neg. possibly with new neg name insted of same name.
+
+
+
+=========================================
+POD's are getting timeout issue
+
+check the folder structure and service names properly
+
+=========================
+##[error]Error: failed to download "oci://us-east4-docker.pkg.dev/inov-dev-smc-01/helm/pharmacy-service"
+
+Service account might have issue in pulling images from Artifactory
+
+========================
+
+no healthy upstream -->
+
+Reason1:  neg is not able to get endpoints 
+
+Reason2: Rerun the pipeline after deleting all the duplicate pipelines. Reason because of old pipelines of service might have failed deployment.
+
+Reason3: older neg name like move2kube.service=
+kubectl edit service assessment-service -n dev
+
+
+==========================
+##[error]error: failed to create secret Post "https://10.177.57.226/api/v1/namespaces/qa/secrets?fieldManager=kubectl-create": dial tcp 10.177.57.226:443: i/o timeout
+
+
+===========================
+
+##[error]Error: stat /mnt/disks/apps/myagent/_work/1377/s/Document.service/eng/helm_template/document-service: no such file or directory
+
+check the service names (lower and upper case letters) in pipeline
+
+===========================
+##[error]Error: /mnt/disks/apps/myagent/_work/91/a/icdcode-service-$(helmversion).tgz: no such file
+
+- group: gcp-helm      is missing
+
+=================================
+Application is decployed and pods are running fine.
+
+Application Error
+Contact administrator for help
+Error Id: 20220809071344.kIoBA0bdikuXSp-bO_OW8A
+
+1. customized Kube-dns has been used.
+2. insted of kube-dns we have tried cloud dns.
+
+===============================
+
+medispanclinical-service-86dcff7b4d-22wcx                    0/1     CrashLoopBackOff         32 (2m17s ago)    140m
+
+Events:
+  Type     Reason   Age                   From     Message
+  ----     ------   ----                  ----     -------
+  Warning  BackOff  62s (x641 over 140m)  kubelet  Back-off restarting failed container
+  
+  
+
+====================================
+Unable to connect to the server: dial tcp 10.178.57.226:443: connect: no route to host
+
+Cluster have issues, so agent is unable to connect to nodes for deployment
+====================================
+Configmap update with our rerunning pipeline
+
+kubectl get cm -n dev | grep <servicename>
+kubectl delete cm p<servicename>-service -n dev
+kubectl create configmap referral-webapp -n dev --from-file=IndividualProperties.json
+kubectl rollout restart deployment referral-webapp -n dev
+kubectl exec -it pharmacy-service-9976b9db-g2jfz -n qa -c pharmacy-service bash
+
+-==============
+ping <ipaddress>
+
+nc -vz <ip> portnmuber
+nv -vz 172.25.72.19 9000
+
+===================================
+
+
+Issue's Faced 
+
+===============================================================
+1. referralconfiguration-service-ff99d4456-h8jz6   0/1     CrashLoopBackOff   6          7m47s
+  Warning  BackOff  4m52s (x5098 over 18h)  kubelet  Back-off restarting failed container
+
+kubectl logs -f <podname>
+
+2. Crashloopback can happen with different reasons.
+1. Image 2. Configmap issue 3. Code issue (build fails) 4. Lackof resources
+
+3. Application status : no healthy upstream   --> DNS issue (URL might not added properly in LB)
+
+4. Host can't be Null:
+
+
+
+Cron job for removing images:
+0 1 * * * docker system prune -f >> /apps/data/test/test.txt
+0 1 * * * docker image prune -f -a >> /apps/data/test/test.txt
+
+Steps to Enable Workload-Identity for GKE
+1:31
+gcloud container clusters update smc-gke-dev01 \
+    --region=us-east4-a \
+    --workload-pool=inov-dev-smc-01.svc.id.goog
+gcloud container node-pools update default-pool \
+    --cluster=smc-gke-dev01 \
+    --workload-metadata=GKE_METADATA
+gcloud container clusters get-credentials smc-gke-dev01
+kubectl create serviceaccount  gcp-log-push --namespace dev
+gcloud iam service-accounts create id-smc-gcp-log-dev01@inov-dev-smc-01.iam.gserviceaccount.com --project=inov-dev-smc-01
+gcloud iam service-accounts add-iam-policy-binding smc-gke-log-dev01@inov-dev-smc-01.iam.gserviceaccount.com --role roles/iam.workloadIdentityUser --member "serviceAccount:inov-dev-smc-01.svc.id.goog[dev/gcp-log-push]"
+kubectl annotate serviceaccount gcp-log-push --namespace dev iam.gke.io/gcp-service-account=smc-gke-log-dev01@inov-dev-smc-01.iam.gserviceaccount.com
+root@dockervm1:~/sangram# cat test.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: workload-identity-test
+  namespace: dev
+spec:
+  containers:
+  - image: google/cloud-sdk:slim
+    name: workload-identity-test
+    command: ["sleep","infinity"]
+  serviceAccountName: gcp-log-push
+  nodeSelector:
+    iam.gke.io/gke-metadata-server-enabled: "true"
+root@dockervm1:~/sangram#
+
+==============================================
+
+terraform vm : 
+
+Path for Admin-Webapp : /app/data/admin-webapp
+
+Using docker file creating a docker image 
+Devops role : 
+
+Changing docker image name in the file admin-webapp-deployment-with-env.yaml_new
+Adding certificate as config map inside Pod
+#kubectl get cm to check config maps
+#kubectl describe cm ssl-cert
+Create a config map
+#kubectl create configmap ssl-cert --from-file <Root-Certificate>
+#kubectl get cm ssl-cert -o yaml  in YAML format
+#Mounting the config map inside the pod 
+Inside pod
+Volumemounts:
+mount path: /etc/ssl/certs/RootCA01.pem
+name: config-volume
+
+Volume:
+-name: config-volume
+ configMap:
+   name: ssl-cert
+#kubectl create -f <yaml_new>
+neg (network endpoint group)
+admin-webapp-serviceneg.yaml to create a service and neg
+proper annotaions are important to create NEG along with service
+#kubectl get svc
+#kubectl get pod -o wide
+#kubectl get ep admin-webapp-svc1
+Pod ip will be used as a endpoint for service
+
+To expose from cluster need to use services like nodeport or cluster ip
+
+curl nodename:(nodeportip)
+
+Create Loadbalancer in GKE cluster to access the url from external world
+
+GCP UI --> Network Services -- Load balancing --rrlb
+
+Routing rules --> add scriptmed.smc.dev.gcp.invovalon.global -- path (/admin and /*) -- newbe (backend)
+kubectl get svcneg
+Add neg name as a backend for LB
+Backend configuration -- ADD Backend 
+Front end configuration is default
+No healthy upstreams
+Network Flow
+Hit LB IP --> contanct backendservice (newbe) --> neg -->neg will have pod ip
+For Multiple Pods:
+Changes done for Replical and creating a pod with admin-webapp.yaml_new
+#kubeclt apply -f <admin-webapp-deployment-with-envyaml_new
+#kubectl get ep admin-webapp.svc1
+Now you will see multiple ip's to endpoint.
+
+Actuall Issue: No POD Listed under NEG (unhealthy 0/0)
+GCP UI --> Network services --> Loadbalancer
+Edit in LB -- Edit on backend service --> add admin-webapp neg and rps as 5
+
+===========================================
+
+Kube commands are not working.
+
+gcloud container clusters get-credentials smc-gke-dev01 --zone us-east4-a --project inov-dev-smc-01
+
+gcloud container clusters get-credentials smc-gke-qa01 --zone us-east4-a --project inov-qual-smc-01
+
+gcloud auth login --no-launch-browser
+
+
+==================================
+you can check any service account assign roles with above query
+
+gcloud projects get-iam-policy inov-dev-smc-01 --format=json | jq '(.bindings[] | select(.members[] | contains("serviceAccount:'smc-gke-dev01@inov-dev-smc-01.iam.gserviceaccount.com'")) | [.role] | .[0])'
+
+
+claim.smc-dev.gcp.inovalon.global.
+
+kubectl label nodes gke-smc-gke-qa01-default-pool-cdb0dbad-bf1d nodePool=gke-smc-gke-qa01-default-pool-cdb0dbad-bf1d
+
+
+gke-smc-gke-dev01-default-pool-2-730606d4-fq5p/10.177.56.25
+
+===================
+IO.OutOfMemeory issue in informatica.
+go to ICCE console and Propertysettings DTM - JVMOption -- -Xmx2048m and save.
+Increase Heap size
+
+Log in to the Application Server Administration Server.
+Navigate to the JVM options.
+Edit the -Xmx256m option.
+This option sets the JVM heap size.
+Set the -Xmx256m option to a higher value, such as Xmx1024m
+
+java -XX:+PrintFlagsFinal -version | grep -iE 'HeapSize'
+
+java -Xms512m -Xmx1024m JavaApp
+
+=========================
+
+root@dockervm1:~/sangram/medispanclinical-service# kubectl get pv
+To learn more, consult https://cloud.google.com/blog/products/containers-kubernetes/kubectl-auth-changes-in-gke
+NAME         CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                  STORAGECLASS   REASON   AGE
+fileserver   100Gi      RWX            Retain           Bound    dev/fileserver-claim                           61m
+root@dockervm1:~/sangram/medispanclinical-service# kubectl get pvc -n dev
+.
+To learn more, consult https://cloud.google.com/blog/products/containers-kubernetes/kubectl-auth-changes-in-gke
+NAME               STATUS   VOLUME       CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+fileserver-claim   Bound    fileserver   100Gi      RWX                           62m
+root@dockervm1:~/sangram/medispanclinical-service# cd /mnt/filedir/
+root@dockervm1:/mnt/filedir# df -h .
+Filesystem            Size  Used Avail Use% Mounted on
+10.177.1.2:/nasshare  2.5T  2.9G  2.4T   1% /mnt/filedir
+root@dockervm1:/mnt/filedir#
+
+Task was to mount external FS inside medispan pod .So we have created PV and PVC and added below lines in medispan deployment file
+
+VolumeMounts
+       - mountPath: /nasshare
+          name: nasshare
+      volumes:
+      - name: nasshare
+        persistentVolumeClaim:
+          claimName: fileserver-claim
+          readOnly: false
+
+All manifest files are here - /root/sangram/medispanclinical-service/
+
+===================================
+portal.azure.com
+avulapati.praveenkumar@outlook.com
+Start$12345
+
+=============================================
+Containerd is not running :
+
+rm /etc/containerd/config.toml
+systemctl restart containerd
+kubeadm init or kubeadm join
+=======================
+To start using your cluster, you need to run the following as a regular user:
+
+  mkdir -p $HOME/.kube
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+kubeadm join 10.0.0.4:6443 --token 5936eq.53qwi5pet3ip1dpi \
+        --discovery-token-ca-cert-hash sha256:3a4b9bf2eba7e99f71444779cfe8020ff4ff2306528b4b0e9208cd7bc8bd4226
+		
+===========================
+
+Events:
+  Type     Reason             Age                    From                Message
+  ----     ------             ----                   ----                -------
+  Warning  FailedScaleUp      20m (x4 over 111m)     cluster-autoscaler  Node scale up in zones us-east4-a associated with this pod failed: Internal error. Pod is at risk of not being scheduled.
+  Normal   NotTriggerScaleUp  5m8s (x692 over 122m)  cluster-autoscaler  pod didn't trigger scale-up (it wouldn't fit if a new node is added): 1 in backoff after failed scale-up
+  Warning  FailedScheduling   104s (x85 over 122m)   default-scheduler   0/1 nodes are available: 1 Insufficient cpu.
+
+
+Username: GCPDevSupportUser01@inovalon.com
+passwrod: Kadivn1931r!9jnegwk
+====================================
+
+URLS's are not connecting outside POD. but same are resolving from node.
+getting connection timeout when we do 
+
+curl -fsSL <>
+
+Rebuild the cluster to fix issue.
+
+root@nginx:/# traceroute inovalononeqa.oktapreview.com
+inovalononeqa.oktapreview.com: Temporary failure in name resolution
+Cannot handle "host" cmdline arg `inovalononeqa.oktapreview.com' on position 1 (argc 1)
+root@nginx:/#
+
+
+============================================
+service-neg sync because service neg is already in useis failing due to this service url is not working
+status of service neg
+kubectl et svc-neg -n qa 
+Status:
+  Conditions:
+    Last Transition Time:  2022-09-16T08:27:59Z
+    Message:               [neg name external-service-neg is already in use, found conflicting description: expected description of NEG object "us-east4-a"/"external-service-neg" to be {"cluster-uid":"84bc3798-b8ee-4365-8e69-1f88cd09987d","namespace":"qa","service-name":"external-service","port":"80"}, but got {"cluster-uid":"0f9913f5-2257-4b95-bfb8-c6c353333d62","namespace":"qa","service-name":"external-service","port":"80"}, neg name external-service-neg is already in use, found conflicting description: expected description of NEG object "us-east4-b"/"external-service-neg" to be {"cluster-uid":"84bc3798-b8ee-4365-8e69-1f88cd09987d","namespace":"qa","service-name":"external-service","port":"80"}, but got {"cluster-uid":"0f9913f5-2257-4b95-bfb8-c6c353333d62","namespace":"qa","service-name":"external-service","port":"80"}, neg name external-service-neg is already in use, found conflicting description: expected description of NEG object "us-east4-c"/"external-service-neg" to be {"cluster-uid":"84bc3798-b8ee-4365-8e69-1f88cd09987d","namespace":"qa","service-name":"external-service","port":"80"}, but got {"cluster-uid":"0f9913f5-2257-4b95-bfb8-c6c353333d62","namespace":"qa","service-name":"external-service","port":"80"}]
+    Reason:                NegInitializationFailed
+    Status:                False
+    Type:                  Initialized
+    Last Transition Time:  2022-09-16T08:27:59Z
+    Message:               [neg name external-service-neg is already in use, found conflicting description: expected description of NEG object "us-east4-a"/"external-service-neg" to be {"cluster-uid":"84bc3798-b8ee-4365-8e69-1f88cd09987d","namespace":"qa","service-name":"external-service","port":"80"}, but got {"cluster-uid":"0f9913f5-2257-4b95-bfb8-c6c353333d62","namespace":"qa","service-name":"external-service","port":"80"}, neg name external-service-neg is already in use, found conflicting description: expected description of NEG object "us-east4-b"/"external-service-neg" to be {"cluster-uid":"84bc3798-b8ee-4365-8e69-1f88cd09987d","namespace":"qa","service-name":"external-service","port":"80"}, but got {"cluster-uid":"0f9913f5-2257-4b95-bfb8-c6c353333d62","namespace":"qa","service-name":"external-service","port":"80"}, neg name external-service-neg is already in use, found conflicting description: expected description of NEG object "us-east4-c"/"external-service-neg" to be {"cluster-uid":"84bc3798-b8ee-4365-8e69-1f88cd09987d","namespace":"qa","service-name":"external-service","port":"80"}, but got {"cluster-uid":"0f9913f5-2257-4b95-bfb8-c6c353333d62","namespace":"qa","service-name":"external-service","port":"80"}]
+    Reason:                NegSyncFailed
+    Status:                False
+    Type:                  Synced
+  Last Sync Time:          2022-09-16T08:42:33Z
+Events:                    <none>
+root@docker-vm-qa1:~#
+
+Delete the backend and routing path in the GCP and run below commands.
+
+Sol: 
+kubectl describe svcneg pharmacy-service-neg -n qa
+
+gcloud auth login
+gcloud container clusters get-credentials smc-gke-qual01 --region us-east4-a --project inov-qual-smc-01
+
+gcloud compute network-endpoint-groups delete webapp-rcm-neg --zone=us-east4-a
+gcloud compute network-endpoint-groups delete webapp-rcm-neg --zone=us-east4-b
+gcloud compute network-endpoint-groups delete webapp-rcm-neg --zone=us-east4-c
+
+
+
+gcloud auth activate-service-account id-smc-azdevops-qa01@inov-qual-smc-01.iam.gserviceaccount.com --key-file=key-qa.json
+gcloud container clusters get-credentials smc-gke-qual01 --region us-east4-a --project inov-qual-smc-01
+============================================
+
+Redis side car go to the path where redis-cli.conf file is there and execute this command to create redis side car
+kubectl create configmap redis-sidecar-config --namespace=qa --from-file=redis-cli.conf
+===============================================
+
+
+1) First Run QA stage for all your services
+2) Add your all services entries in this file
+root@docker-vm-qa1:~/sangram/dns# vi config.txt
+3 ) run the below command, no need to do anything on console level manually in LB.
+for servicename in $(cat config.txt|awk '{print tolower($0)}') ; do bash backend-neg-add.sh $servicename ; done
+4 ) check your swager QA service URL
+===========================================
+Certificate issue.. 
+user docker ps -a | grep kube-apiserver
+docker ps -a | grep etcd
+docker logs etcd container
+12739 port is used by etcd...check the logs of etc container
+there is wrong CA authority singed certificate in logs 
+inside /etc/kubernetes/manifests/etcd.yaml
+trusted certificate is metioned as wrong certificate path... taken the correct trusted path from etc.yaml and updated in kube-apiserver.yaml...issue fixed
+====================================
