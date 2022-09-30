@@ -1,0 +1,13 @@
+common:
+  replicas: 2
+  service: "pharmacy-service"
+  imagetag: "4.15.0.1"
+  neg: "pharmacy-service-neg"
+
+resources: 
+  requests:
+    memory: "256Mi"
+    cpu: "500m"
+  limits:
+    memory: "2Gi"
+    cpu: "1000m"
