@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    service: {{ .Values.common.service }}
+  name: {{ .Values.common.service }}
+  namespace: {{ .Values.common.Namespace }}
+spec:
+  replicas: {{ .Values.common.replicas }}
+  selector:
+    matchLabels:
+      service: {{ .Values.common.service }}
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        service: {{ .Values.common.service }}
+      name: {{ .Values.common.service }}
+    spec:
+      containers:
+        - image: us-east4-docker.pkg.dev/inov-dev-smc-01/smc-dev-docker/{{ .Values.common.service }}:{{ .Values.common.imagetag }}
+          imagePullPolicy: Always
+          name: {{ .Values.common.service }}
+          ports:
+            - containerPort: 80
+              protocol: TCP
+          volumeMounts:
+          - mountPath: /etc/ssl/certs/RootCA01.pem
+            name: config-volume
+          - name: config-map
+            readOnly: false
+            mountPath: /app/ConfigFiles/IndividualProperties.json
+            subPath: IndividualProperties.json          
+          resources: 
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+      - name: config-volume
+        configMap:
+          name: ssl-cert
+      - name: config-map
+        configMap:
+          name: {{ .Values.common.service }}
+      imagePullSecrets:
+        - name: gcpartifact2
+  
