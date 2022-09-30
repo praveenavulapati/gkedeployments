@@ -1,0 +1,7 @@
+apiVersion: v2
+description: Helm Chart
+keywords:
+  - pharmacyservice
+name: pharmacy-service
+version: 0.1.0
+appversion: "1.16.0"
