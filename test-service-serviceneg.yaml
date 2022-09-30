@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.common.service }} # Name of Service
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}' # Creates a NEG after an Ingress is created
+    cloud.google.com/neg: '{"exposed_ports": {"80":{"name": "pharmacy-service-neg"}}}'
+spec: # Service's specification
+  selector:
+    service: {{ .Values.common.service }}
+  ports:
+    - name: http
+      port: 80 # Service's port
+      protocol: TCP
+      targetPort: 80
+  type: NodePort
