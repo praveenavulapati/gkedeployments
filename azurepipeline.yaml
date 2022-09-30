@@ -1,0 +1,671 @@
+name: $(Service)_Full_$(date:yyyyMMdd)$(rev:.r)
+trigger:
+  - master
+
+variables:
+- name: _appName
+  value: pharmacy-service
+- name: CloudFoundryInstanceCount
+  value: 1
+- name: Domain
+  value: Pharmacy
+- group: BuildReleaseTools
+- group: smc-db-native-cre-tenants3.0
+- group: smc-db-native-gcp-tenants
+- group: gcp-helm
+- name: DOTNET_CLI_HOME
+  value: "/tmp"
+- name: VersionFilepath
+  value:  "version.json"
+- name: RevisionSeparatorChar
+  value: "." 
+- name: BuildConfiguration
+  value: release 
+- name: ScriptPath
+  value: $(BRT_UpdateBuildVersionScript)
+- name: BuildVersionNumber
+  value: $(Build.BuildNumber)
+- name: Service
+  value: Pharmacy.Service
+- name: Chartname
+  value: pharmacy-service
+- name: projectKey
+  value: ScriptMed_Cloud_Pharmacy.Service
+- name: BuildArtifactDirectory
+  value: "$(System.DefaultWorkingDirectory)/$(Service)/drop"
+- name: WorkingDirectory
+  value: "$(System.DefaultWorkingDirectory)/$(Service)/drop"
+
+parameters:
+- name: SonarQubeProjectKey
+  type: string
+  default: '$(projectKey)'
+- name: SonarQubeProjectVersion
+  type: string
+  default: '$(Build.BuildNumber)'
+- name: IncludeTestReports
+  type: boolean
+  default: true
+- name: TestResultDirectory
+  type: string
+  default: '$(Build.SourcesDirectory)/$(Build.Repository.Name)/tests/test-results'
+- name: TestResultsFilename
+  type: string
+  default: 'logged-results.trx'
+- name: OpenCoverFilename
+  type: string
+  default: 'coverage.opencover.xml'
+- name: StepCondition
+  type: string
+  default: succeeded()
+
+stages:
+- stage: Build
+
+  jobs:
+  - job: BuildApp
+    pool:
+     name: 'GCPAGENT'
+     demands:
+       - agent.name -equals gcp-windows-app
+    steps:
+    - checkout: self
+    - checkout: git://ScriptMed Cloud/BuildReleaseTools@master
+
+   # Update Build Version 
+    - task: PowerShell@2
+      displayName: 'Update Build Version'
+      inputs:
+        filePath: '$(BRT_DefaultWorkingDirectory)/vsts/update-build-version.ps1'
+        arguments: '-PAT ''$(BRT_FullBuildPAT)'' -VersionFilepath ''$(VersionFilepath)'' -RevisionSeparatorChar ''$(RevisionSeparatorChar)'' -UpdateDelayMs 100 -TimeoutInSeconds 30 -StabilizationPeriodInSeconds 3 -Verbose'
+        errorActionPreference: 'continue'
+        failOnStderr: true
+        showWarnings: true
+        pwsh: true
+        workingDirectory: '$(System.DefaultWorkingDirectory)\$(Service)'
+
+    - task: SonarQubePrepare@4
+      inputs:
+        SonarQube: 'SMC SonarQube Enterprise'
+        scannerMode: 'MSBuild'
+        projectKey: '${{ parameters.SonarQubeProjectKey }}'
+        projectVersion: '${{ parameters.SonarQubeProjectVersion }}'
+        extraProperties: |
+          sonar.cs.vstest.reportsPaths=${{ parameters.TestResultDirectory }}/${{ parameters.TestResultsFilename }}
+          
+          sonar.cs.opencover.reportsPaths=${{ parameters.TestResultDirectory }}/${{ parameters.OpenCoverFilename }}
+
+
+    - task: PowerShell@2
+      displayName: 'Run Build Script'
+      inputs:
+        filePath: '$(System.DefaultWorkingDirectory)/$(Service)/build.ps1'
+        arguments: '-BuildConfiguration ''$(BuildConfiguration)'' -PublishPath ''$(Build.ArtifactStagingDirectory)'' -VersionNumber ''$(BuildVersionNumber)'' -Verbose'
+        errorActionPreference: continue
+        failOnStderr: true
+        showWarnings: true
+        pwsh: true
+      env:
+        SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+    - task: SonarQubeAnalyze@4
+      displayName: '2.SQ Run .NET Code Analysis'
+      condition: ${{ parameters.StepCondition }}
+
+
+   # Microservice Build Upload 
+   # Upload Artifacts and Dockerfile to Azure DevOps Build
+    - task: CopyFiles@2
+      displayName: 'Upload Dockerfile'
+      inputs:
+       sourceFolder: '$(System.DefaultWorkingDirectory)/$(Service)/eng'
+       contents: 'Dockerfile'
+       targetFolder: '$(Build.ArtifactStagingDirectory)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Upload Artifacts to Azure DevOps Build'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+
+    - task: SonarQubePublish@4
+      displayName: '3.SQ Publish .NET Quality Gate Result'
+      inputs:
+        pollingTimeoutSec: '300'
+      condition: ${{ parameters.StepCondition }}
+
+
+  - job: BuildImage
+    dependsOn: BuildApp
+    variables:
+      gcrsecret2: gcpartifact2
+    pool:
+     name: 'GCPAGENT'
+     demands:
+       - agent.name -equals gcp-docker-vm-app
+
+    steps:
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download Artifacts and Dockerfile'
+      inputs:
+        buildType: 'current'
+        downloadType: 'single'
+        artifactName: 'drop'
+        downloadPath: '$(System.ArtifactsDirectory)'
+
+    - task: Docker@2
+      displayName: Docker Login to Registry
+      inputs:
+        containerRegistry: 'GCP-Artifact-Registry'
+        command: 'login'
+
+    - task: Docker@2
+      displayName: Building Docker Image
+      inputs:
+        containerRegistry: 'GCP-Artifact-Registry'
+        repository: 'inov-dev-smc-01/smc-dev-docker/$(Chartname)'
+        command: 'build'
+        Dockerfile: '$(System.ArtifactsDirectory)/drop/Dockerfile'
+        tags: '$(build.buildNumber)'
+
+    - task: Docker@2
+      displayName: Image Push to Registry
+      inputs:
+        containerRegistry: 'GCP-Artifact-Registry'
+        repository: 'inov-dev-smc-01/smc-dev-docker/$(Chartname)'
+        command: 'Push'
+        Dockerfile: '**/Dockerfile'
+        tags: '$(build.buildNumber)'
+
+- stage: Dev
+
+  variables:
+    - name: EnvironmentsConfigurationDirectory
+      value: "gcp-dev"
+    - name: EnvironmentPath
+      value: "$(System.DefaultWorkingDirectory)/EnvironmentsConfiguration/src/$(EnvironmentsConfigurationDirectory)/manifests"
+    - name: PowershellOutputManifestFilename
+      value: "run-manifest.yml"
+    - name: EnvironmentName
+      value: "gcp-dev"
+    - name: AmalgamationOutputManifestFilename
+      value: "amalgamation-manifest.yml"
+    - name: AmalgamationOutputJsonConfigFilename
+      value: "IndividualProperties.json"
+    - name: ConfigurationDestination
+      value: "JsonConfig"
+    - name: ShadowTesting
+      value: "false"
+    - name: ScriptPath
+      value: "$(System.DefaultWorkingDirectory)/BuildReleaseTools/config/replace_tokens.ps1"
+    - name: FilesToTokenize
+      value: "IndividualProperties.json;gcp.json;otel-config.yaml"
+    - name: EmptyTokenValidationLevel
+      value: "Info"
+    - name: KeepTokenOnNoMatch
+      value: "$true"
+    - name: amalgamationdirectory
+      value: "$(System.DefaultWorkingDirectory)/$(Service)/drop/publish"
+    - name: SecretsDictionary6
+      value: "SKIP_AZDO_TASK"
+    - name: SecretsDictionary5
+      value: "SKIP_AZDO_TASK"
+    - name: SecretsDictionary4
+      value: "SKIP_AZDO_TASK"
+    - name: SecretsDictionary3
+      value: $(ReplaceTokensSecretArguments_IncludedConfig)|$(WeFaxReplacetokens)|$(SchedulerServiceSecretArguments)
+    - name: SecretsDictionary2
+      value: $(ReplaceTokensSecretArguments_Native)
+    - name: SecretsDictionary1
+      value: $(ReplaceTokensSecretArguments)
+    - name: EmptyTokenValidationLevel
+      value: "Info"
+    - name: KeepTokenOnNoMatch
+      value: "$true"
+    - name: namespace
+      value: dev
+    - group: env-gcp-development
+    - group: smc-db-native-cre-tenants4.0
+    - group: smc-db-native-cre-tenants3.0
+    - group: smc-db-native-gcp-tenants
+    - group: okta
+    - group: smc-db-native-nonprod-cre
+    - group: SM-CloudInt01
+    - group: Microservice Endpoints (LEGACY)
+    - group: BuildReleaseTools
+    - group: EnvConstants
+    - group: cmisp-oracle-juliett
+    - group: cmisp-oracle-smc-passwords
+
+  jobs:
+  - job: DEV
+    variables:
+      gcrsecret2: gcpartifact2
+    pool:
+     name: 'GCPAGENT'
+     demands:
+       - agent.name -equals gcp-docker-vm-app
+    steps:
+    - checkout: self
+    - checkout: git://ScriptMed Cloud/EnvironmentsConfiguration@master
+    - checkout: git://ScriptMed Cloud/BuildReleaseTools@master
+
+    - task: KubernetesManifest@0
+      displayName: Create secret
+      inputs:
+        action: 'createSecret'
+        kubernetesServiceConnection: 'Azure_GKE_service_connection'
+        namespace: '$(namespace)'
+        secretType: 'dockerRegistry'
+        secretName: '$(gcrsecret2)'
+        dockerRegistryEndpoint: 'GCP-Artifact-Registry'
+
+
+    
+    #- task: HelmDeploy@0
+    #  displayName: Helm Login 
+    #  inputs:
+    #    connectionType: 'Kubernetes Service Connection'
+    #    kubernetesServiceConnection: 'Azure_GKE_service_connection'
+    #    command: 'login'
+
+    - task: DownloadPipelineArtifact@2
+      inputs:
+        buildType: 'current'
+        artifactName: 'drop'
+        targetPath: '$(BuildArtifactDirectory)'
+    - task: UniversalPackages@0
+      displayName: 'Download ConfigManagementCli'
+      inputs:
+          command: 'download'
+          downloadDirectory: '$(System.DefaultWorkingDirectory)'
+          feedsToUse: 'internal'
+          vstsFeed: '14bd9e10-f29a-4590-960a-76bbccd7088b'
+          vstsFeedPackage: '364a5751-da59-47b3-a93a-3538c7c002b8'
+          vstsPackageVersion: '*'
+          verbosity: 'Information'
+    - task: ExtractFiles@1
+      displayName: 'Extract CMCLI'
+      inputs:
+          archiveFilePatterns: '$(System.DefaultWorkingDirectory)/*.zip'
+          destinationFolder: '$(System.DefaultWorkingDirectory)/cmcli'
+    - task: UseDotNet@2
+      displayName: "Install .NET Core SDK"
+      inputs:
+          version: 5.x
+          performMultiLevelLookup: true
+          includePreviewVersions: true # Required for preview versions
+
+    - task: PowerShell@2
+      displayName: 'CMCLI - Amalgamate'
+      inputs:
+          targetType: filePath
+          filePath: '$(System.DefaultWorkingDirectory)/cmcli/scripts/invoke-cmcli.ps1'
+          arguments: '-Command "amalgamate --key-file ''$(amalgamationdirectory)/app-config-keys.yml'' --manifest-file ''$(amalgamationdirectory)/app-manifest.yml'' --dependency-file ''$(amalgamationdirectory)/app-manifest-deps.yml'' --environment-path ''$(EnvironmentPath)'' --environment-name ''$(EnvironmentName)'' --output-pcf-manifest-file ''$(amalgamationdirectory)/$(AmalgamationOutputManifestFilename)'' --output-json-config-file ''$(amalgamationdirectory)/$(AmalgamationOutputJsonConfigFilename)'' --configuration-destination ''$(ConfigurationDestination)'' --no-fail ''$(ShadowTesting)''"'
+          errorActionPreference: continue
+          failOnStderr: true
+          showWarnings: true
+          pwsh: true
+          workingDirectory: '$(System.DefaultWorkingDirectory)/cmcli'
+
+    - task: PowerShell@2
+      displayName: 'Replace Tokens6'
+      inputs:
+        targetType: filePath
+        filePath: '$(ScriptPath)'
+        arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary6)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+        errorActionPreference: continue
+        failOnStderr: true
+        showWarnings: true
+        pwsh: true
+        workingDirectory: '$(amalgamationdirectory)'
+      condition: and(succeeded(), ne(variables['SecretsDictionary6'], 'SKIP_AZDO_TASK'))
+    
+    - task: PowerShell@2
+      displayName: 'Replace Tokens5'
+      inputs:
+        targetType: filePath
+        filePath: '$(ScriptPath)'
+        arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary5)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+        errorActionPreference: continue
+        failOnStderr: true
+        showWarnings: true
+        pwsh: true
+        workingDirectory: '$(amalgamationdirectory)'
+      condition: and(succeeded(), ne(variables['SecretsDictionary5'], 'SKIP_AZDO_TASK'))
+    
+    - task: PowerShell@2
+      displayName: 'Replace Tokens4'
+      inputs:
+        targetType: filePath
+        filePath: '$(ScriptPath)'
+        arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary4)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+        errorActionPreference: continue
+        failOnStderr: true
+        showWarnings: true
+        pwsh: true
+        workingDirectory: '$(amalgamationdirectory)'
+      condition: and(succeeded(), ne(variables['SecretsDictionary4'], 'SKIP_AZDO_TASK'))
+
+    - task: PowerShell@2
+      displayName: 'Replace Tokens3'
+      inputs:
+        targetType: filePath
+        filePath: '$(ScriptPath)'
+        arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary3)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+        errorActionPreference: continue
+        failOnStderr: true
+        showWarnings: true
+        pwsh: true
+        workingDirectory: '$(amalgamationdirectory)'
+      condition: and(succeeded(), ne(variables['SecretsDictionary3'], 'SKIP_AZDO_TASK'))
+
+    - task: PowerShell@2
+      displayName: 'Replace Tokens2'
+      inputs:
+        targetType: filePath
+        filePath: '$(ScriptPath)'
+        arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary2)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+        errorActionPreference: continue
+        failOnStderr: true
+        showWarnings: true
+        pwsh: true
+        workingDirectory: '$(amalgamationdirectory)'
+      condition: and(succeeded(), ne(variables['SecretsDictionary2'], 'SKIP_AZDO_TASK'))
+
+    - task: PowerShell@2
+      displayName: 'Replace Tokens1'
+      inputs:
+        targetType: filePath
+        filePath: '$(ScriptPath)'
+        arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary1)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+        errorActionPreference: continue
+        failOnStderr: true
+        showWarnings: true
+        pwsh: true
+        workingDirectory: '$(amalgamationdirectory)'
+      condition: and(succeeded(), ne(variables['SecretsDictionary1'], 'SKIP_AZDO_TASK'))
+    
+    - task: Kubernetes@1
+      displayName: 'create config-map'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: 'Azure_GKE_service_connection'
+        namespace: '$(namespace)'
+        command: 'get'
+        arguments: 'configmap'
+        secretType: 'dockerRegistry'
+        containerRegistryType: 'Azure Container Registry'
+        configMapName: '$(Chartname)'
+        forceUpdateConfigMap: true
+        useConfigMapFile: true
+        configMapFile: '$(amalgamationdirectory)/IndividualProperties.json'
+
+    - task: HelmDeploy@0
+      displayName: Helm Package
+      inputs:
+        command: 'package'
+        chartPath: '$(System.DefaultWorkingDirectory)/$(Service)/eng/helm_template/$(Chartname)'
+
+    - task: HelmDeploy@0
+      displayName: Helm push
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceConnection: 'Azure_GKE_service_connection'
+        command: 'push'
+        arguments: '$(Build.ArtifactStagingDirectory)/$(Chartname)-$(helmversion).tgz oci://us-east4-docker.pkg.dev/inov-dev-smc-01/helm'
+
+    - task: HelmDeploy@0
+      displayName: Helm upgrade
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceConnection: 'Azure_GKE_service_connection'
+        namespace: '$(namespace)'
+        command: 'upgrade'
+        chartType: 'Name'
+        chartName: 'oci://us-east4-docker.pkg.dev/inov-dev-smc-01/helm/$(Chartname)'
+        releaseName: '$(Chartname)'
+        overrideValues: 'common.imagetag=$(build.buildNumber)'
+        arguments: '--timeout 25m'
+
+- stage: QA
+
+  jobs:
+  - deployment: QA
+    environment: GCP-QA
+    variables:
+    - name: namespace
+      value: qa
+    - name: gcrsecret2 
+      value: gcpartifact2
+    - name: EnvironmentsConfigurationDirectory
+      value: "gcp-qa"
+    - name: EnvironmentPath
+      value: "$(System.DefaultWorkingDirectory)/EnvironmentsConfiguration/src/$(EnvironmentsConfigurationDirectory)/manifests"
+    - name: PowershellOutputManifestFilename
+      value: "run-manifest.yml"
+    - name: EnvironmentName
+      value: "gcp-qa"
+    - name: AmalgamationOutputManifestFilename
+      value: "amalgamation-manifest.yml"
+    - name: AmalgamationOutputJsonConfigFilename
+      value: "IndividualProperties.json"
+    - name: ConfigurationDestination
+      value: "JsonConfig"
+    - name: ShadowTesting
+      value: "false"
+    - name: ScriptPath
+      value: "$(System.DefaultWorkingDirectory)/BuildReleaseTools/config/replace_tokens.ps1"
+    - name: FilesToTokenize
+      value: "IndividualProperties.json;gcp.json;otel-config.yaml"
+    - name: EmptyTokenValidationLevel
+      value: "Info"
+    - name: KeepTokenOnNoMatch
+      value: "$true"
+    - name: amalgamationdirectory
+      value: "$(System.DefaultWorkingDirectory)/$(Service)/drop/publish"
+    - name: SecretsDictionary6
+      value: "SKIP_AZDO_TASK"
+    - name: SecretsDictionary5
+      value: "SKIP_AZDO_TASK"
+    - name: SecretsDictionary4
+      value: "SKIP_AZDO_TASK"
+    - name: SecretsDictionary3
+      value: $(ReplaceTokensSecretArguments_IncludedConfig)|$(WeFaxReplacetokens)|$(SchedulerServiceSecretArguments)
+    - name: SecretsDictionary2
+      value: $(ReplaceTokensSecretArguments_Native)
+    - name: SecretsDictionary1
+      value: $(ReplaceTokensSecretArguments)
+    - name: EmptyTokenValidationLevel
+      value: "Info"
+    - name: KeepTokenOnNoMatch
+      value: "$true"
+    - group: env-gcp-qa
+    - group: smc-db-native-cre-tenants4.0
+    - group: smc-db-native-cre-tenants3.0
+    - group: smc-db-native-gcp-tenants
+    - group: okta
+    - group: smc-db-native-nonprod-cre
+    - group: SM-CloudInt01
+    - group: Microservice Endpoints (LEGACY)
+    - group: BuildReleaseTools
+    - group: EnvConstants
+    - group: cmisp-oracle-juliett
+    - group: cmisp-oracle-smc-passwords
+    - group: cmisp-oracle-hotela
+
+    pool:
+     name: 'GCPAGENT'
+     demands:
+       - agent.name -equals gcp-docker-vm-qa1
+    
+    strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+            - checkout: git://ScriptMed Cloud/EnvironmentsConfiguration@master
+            - checkout: git://ScriptMed Cloud/BuildReleaseTools@master
+            - task: KubernetesManifest@0
+              displayName: Create secret
+              inputs:
+                action: 'createSecret'
+                kubernetesServiceConnection: 'AzureDevops-GKE-Connection-QA'
+                namespace: '$(namespace)'
+                secretType: 'dockerRegistry'
+                secretName: '$(gcrsecret2)'
+                dockerRegistryEndpoint: 'GCP-Artifact-Registry'
+
+            - task: HelmDeploy@0
+              displayName: Helm Login 
+              inputs:
+                connectionType: 'Kubernetes Service Connection'
+                kubernetesServiceConnection: 'AzureDevops-GKE-Connection-QA'
+                command: 'login'
+
+            - task: DownloadPipelineArtifact@2
+              inputs:
+                buildType: 'current'
+                artifactName: 'drop'
+                targetPath: '$(BuildArtifactDirectory)'
+
+            - task: UniversalPackages@0
+              displayName: 'Download ConfigManagementCli'
+              inputs:
+                  command: 'download'
+                  downloadDirectory: '$(System.DefaultWorkingDirectory)'
+                  feedsToUse: 'internal'
+                  vstsFeed: '14bd9e10-f29a-4590-960a-76bbccd7088b'
+                  vstsFeedPackage: '364a5751-da59-47b3-a93a-3538c7c002b8'
+                  vstsPackageVersion: '*'
+                  verbosity: 'Information'
+
+            - task: ExtractFiles@1
+              displayName: 'Extract CMCLI'
+              inputs:
+                  archiveFilePatterns: '$(System.DefaultWorkingDirectory)/*.zip'
+                  destinationFolder: '$(System.DefaultWorkingDirectory)/cmcli'
+
+            - task: UseDotNet@2
+              displayName: "Install .NET Core SDK"
+              inputs:
+                  version: 5.x
+                  performMultiLevelLookup: true
+                  includePreviewVersions: true # Required for preview versions
+
+            - task: PowerShell@2
+              displayName: 'CMCLI - Amalgamate'
+              inputs:
+                  targetType: filePath
+                  filePath: '$(System.DefaultWorkingDirectory)/cmcli/scripts/invoke-cmcli.ps1'
+                  arguments: '-Command "amalgamate --key-file ''$(amalgamationdirectory)/app-config-keys.yml'' --manifest-file ''$(amalgamationdirectory)/app-manifest.yml'' --dependency-file ''$(amalgamationdirectory)/app-manifest-deps.yml'' --environment-path ''$(EnvironmentPath)'' --environment-name ''$(EnvironmentName)'' --output-pcf-manifest-file ''$(amalgamationdirectory)/$(AmalgamationOutputManifestFilename)'' --output-json-config-file ''$(amalgamationdirectory)/$(AmalgamationOutputJsonConfigFilename)'' --configuration-destination ''$(ConfigurationDestination)'' --no-fail ''$(ShadowTesting)''"'
+                  errorActionPreference: continue
+                  failOnStderr: true
+                  showWarnings: true
+                  pwsh: true
+                  workingDirectory: '$(System.DefaultWorkingDirectory)/cmcli'
+
+            - task: PowerShell@2
+              displayName: 'Replace Tokens6'
+              inputs:
+                targetType: filePath
+                filePath: '$(ScriptPath)'
+                arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary6)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+                errorActionPreference: continue
+                failOnStderr: true
+                showWarnings: true
+                pwsh: true
+                workingDirectory: '$(amalgamationdirectory)'
+              condition: and(succeeded(), ne(variables['SecretsDictionary6'], 'SKIP_AZDO_TASK'))
+    
+            - task: PowerShell@2
+              displayName: 'Replace Tokens5'
+              inputs:
+                targetType: filePath
+                filePath: '$(ScriptPath)'
+                arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary5)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+                errorActionPreference: continue
+                failOnStderr: true
+                showWarnings: true
+                pwsh: true
+                workingDirectory: '$(amalgamationdirectory)'
+              condition: and(succeeded(), ne(variables['SecretsDictionary5'], 'SKIP_AZDO_TASK'))
+    
+            - task: PowerShell@2
+              displayName: 'Replace Tokens4'
+              inputs:
+                targetType: filePath
+                filePath: '$(ScriptPath)'
+                arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary4)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+                errorActionPreference: continue
+                failOnStderr: true
+                showWarnings: true
+                pwsh: true
+                workingDirectory: '$(amalgamationdirectory)'
+              condition: and(succeeded(), ne(variables['SecretsDictionary4'], 'SKIP_AZDO_TASK'))
+
+            - task: PowerShell@2
+              displayName: 'Replace Tokens3'
+              inputs:
+                targetType: filePath
+                filePath: '$(ScriptPath)'
+                arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary3)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+                errorActionPreference: continue
+                failOnStderr: true
+                showWarnings: true
+                pwsh: true
+                workingDirectory: '$(amalgamationdirectory)'
+              condition: and(succeeded(), ne(variables['SecretsDictionary3'], 'SKIP_AZDO_TASK'))
+
+            - task: PowerShell@2
+              displayName: 'Replace Tokens2'
+              inputs:
+                targetType: filePath
+                filePath: '$(ScriptPath)'
+                arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary2)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+                errorActionPreference: continue
+                failOnStderr: true
+                showWarnings: true
+                pwsh: true
+                workingDirectory: '$(amalgamationdirectory)'
+              condition: and(succeeded(), ne(variables['SecretsDictionary2'], 'SKIP_AZDO_TASK'))
+
+            - task: PowerShell@2
+              displayName: 'Replace Tokens1'
+              inputs:
+                targetType: filePath
+                filePath: '$(ScriptPath)'
+                arguments: '-Files ''$(FilesToTokenize)'' -KeyValues ''$(SecretsDictionary1)'' -EmptyTokenCheck ''$(EmptyTokenValidationLevel)'' -KeepTokenOnNoMatch $(KeepTokenOnNoMatch)'
+                errorActionPreference: continue
+                failOnStderr: true
+                showWarnings: true
+                pwsh: true
+                workingDirectory: '$(amalgamationdirectory)'
+              condition: and(succeeded(), ne(variables['SecretsDictionary1'], 'SKIP_AZDO_TASK'))
+    
+            - task: Kubernetes@1
+              displayName: 'create config-map'
+              inputs:
+                connectionType: 'Kubernetes Service Connection'
+                kubernetesServiceEndpoint: 'AzureDevops-GKE-Connection-QA'
+                namespace: '$(namespace)'
+                command: 'get'
+                arguments: 'configmap'
+                secretType: 'dockerRegistry'
+                containerRegistryType: 'Azure Container Registry'
+                configMapName: '$(Chartname)'
+                forceUpdateConfigMap: true
+                useConfigMapFile: true
+                configMapFile: '$(amalgamationdirectory)/IndividualProperties.json'
+
+            - task: HelmDeploy@0
+              displayName: Helm upgrade
+              inputs:
+                connectionType: 'Kubernetes Service Connection'
+                kubernetesServiceConnection: 'AzureDevops-GKE-Connection-QA'
+                namespace: '$(namespace)'
+                command: 'upgrade'
+                chartType: 'Name'
+                chartName: 'oci://us-east4-docker.pkg.dev/inov-dev-smc-01/helm/$(Chartname)'
+                releaseName: '$(Chartname)'
+                overrideValues: 'common.imagetag=$(build.buildNumber)'
+                arguments: '--timeout 25m'
